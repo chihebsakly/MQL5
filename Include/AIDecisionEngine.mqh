@@ -84,10 +84,10 @@ public:
       if(state.orderBlockDetected && state.obDirection > 0) bullSignals++;
       if(state.orderBlockDetected && state.obDirection < 0) bearSignals++;
 
-      //--- Direction decision
-      if(bullSignals > bearSignals && bullSignals >= 4)
+      //--- Direction decision (minimum 3 aligned factors)
+      if(bullSignals > bearSignals && bullSignals >= 3)
          signal.direction = 1;
-      else if(bearSignals > bullSignals && bearSignals >= 4)
+      else if(bearSignals > bullSignals && bearSignals >= 3)
          signal.direction = -1;
       else
       {
@@ -178,14 +178,14 @@ private:
    //+------------------------------------------------------------------+
    double ScoreTrend(const SMarketState &state)
    {
-      double score = 50.0; // Neutral base
+      double score = 40.0; // Base
 
-      if(state.emaAligned) score += 30.0;
+      if(state.emaAligned) score += 35.0;
+      else if(state.trendDirection != 0) score += 20.0;
 
+      if(state.trendStrength > 0.5) score += 10.0;
       if(state.trendStrength > 1.0) score += 10.0;
-      if(state.trendStrength > 2.0) score += 10.0;
-
-      if(state.trendDirection != 0) score += 10.0;
+      if(state.trendStrength > 2.0) score += 5.0;
 
       return MathMin(100.0, MathMax(0.0, score));
    }
@@ -252,12 +252,13 @@ private:
    //+------------------------------------------------------------------+
    double ScoreStructure(const SMarketState &state)
    {
-      double score = 50.0;
+      double score = 45.0;
 
       if(state.bosDetected) score += 25.0;
       if(state.chochDetected) score += 15.0;
-      if(state.structureType == 1) score += 10.0; // Trending
+      if(state.structureType == 1) score += 15.0; // Trending
       if(state.structureType == 2) score += 20.0; // Breakout
+      if(state.structureBias != 0) score += 5.0;
 
       return MathMin(100.0, MathMax(0.0, score));
    }
@@ -285,13 +286,14 @@ private:
    //+------------------------------------------------------------------+
    double ScoreMTF(const SMarketState &state)
    {
-      double score = 30.0;
+      double score = 35.0;
 
       //--- Each aligned timeframe adds points
-      score += state.mtfAlignment * 15.0;
+      score += state.mtfAlignment * 12.0;
 
       //--- Full alignment bonus
-      if(state.mtfAlignment >= 4) score += 10.0;
+      if(state.mtfAlignment >= 4) score += 17.0;
+      else if(state.mtfAlignment >= 3) score += 8.0;
 
       return MathMin(100.0, MathMax(0.0, score));
    }
