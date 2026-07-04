@@ -49,6 +49,9 @@ input int      InpMaxConsLosses   = 3;               // Max Consecutive Losses B
 
 //--- Entry Filters
 input string   InpSection4        = "?????? ENTRY FILTERS ??????"; // ??????????????????
+input int      InpMinSignalScore  = 80;              // Minimum Signal Score (0-100)
+input double   InpMaxSpread       = 50.0;            // Maximum Spread (points)
+input int      InpMinVolume       = 100;             // Minimum Tick Volume
 input int      InpMinSignalScore  = 70;              // Minimum Signal Score (0-100)
 input double   InpMaxSpread       = 8000.0;           // Maximum Spread (points)
 input int      InpMinVolume       = 50;              // Minimum Tick Volume
@@ -94,6 +97,10 @@ input double   InpPartialATRMult  = 2.0;             // Partial Close ATR Distan
 //--- Session Filter
 input string   InpSection10       = "?????? SESSION FILTER ??????"; // ?????????????????
 input bool     InpUseSessions     = true;            // Enable Session Filter
+input int      InpLondonStart     = 8;               // London Session Start (Hour)
+input int      InpLondonEnd       = 17;              // London Session End (Hour)
+input int      InpNYStart         = 13;              // New York Session Start (Hour)
+input int      InpNYEnd           = 22;              // New York Session End (Hour)
 input int      InpLondonStart     = 7;               // London Session Start (Hour)
 input int      InpLondonEnd       = 18;              // London Session End (Hour)
 input int      InpNYStart         = 12;              // New York Session Start (Hour)
@@ -238,6 +245,7 @@ void OnTick()
    if(!g_isInitialized || !InpEnableTrading) return;
 
    //--- Manage existing positions (every tick)
+   g_Executor.ManagePositions(_Symbol, g_MarketAnalyzer.GetATRValue());
    double currentATR = g_MarketAnalyzer.GetATRValue();
    if(currentATR > 0)
       g_Executor.ManagePositions(_Symbol, currentATR);
@@ -254,6 +262,7 @@ void OnTick()
    //--- Update market analysis
    if(!g_MarketAnalyzer.Update(_Symbol))
    {
+      Print("WARNING: Market analysis update failed");
       if(barCount <= 10)
          Print("BAR ", barCount, ": Update() failed - ATR unavailable");
       return;
@@ -287,6 +296,8 @@ void OnTick()
    }
 
    //--- Spread filter
+   double currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
+   if(currentSpread > InpMaxSpread * _Point)
    long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if(spreadPoints > (long)InpMaxSpread)
    {
@@ -399,6 +410,9 @@ bool IsValidSession()
    if(hour >= InpNYStart && hour < InpNYEnd)
       return true;
 
+   //--- Crypto trades 24/7 but we prefer high liquidity hours
+   //--- Asian session overlap for crypto
+   if(hour >= 0 && hour < 3)
    //--- Asian session for crypto (high BTC liquidity)
    if(hour >= 0 && hour < 6)
       return true;
