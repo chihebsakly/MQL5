@@ -50,7 +50,7 @@ input int      InpMaxConsLosses   = 3;               // Max Consecutive Losses B
 //--- Entry Filters
 input string   InpSection4        = "?????? ENTRY FILTERS ??????"; // ??????????????????
 input int      InpMinSignalScore  = 70;              // Minimum Signal Score (0-100)
-input double   InpMaxSpread       = 500.0;            // Maximum Spread (points)
+input double   InpMaxSpread       = 8000.0;           // Maximum Spread (points)
 input int      InpMinVolume       = 50;              // Minimum Tick Volume
 
 //--- Trend Parameters
