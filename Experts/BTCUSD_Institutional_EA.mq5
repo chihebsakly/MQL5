@@ -65,7 +65,7 @@ input bool     InpEnableTrading   = true;            // Enable Trading
 
 input string   InpSection2        = "====== CAPITAL MANAGEMENT ======"; // ===Capital===
 input double   InpInitialCapital  = 100.0;           // Initial Capital (USD)
-input double   InpStartLot        = 0.05;            // Starting Lot Size
+input double   InpStartLot        = 0.01;            // Starting Lot Size
 input double   InpMaxLot          = 1.0;             // Maximum Lot Size
 input double   InpRiskPercent     = 1.0;             // Risk Per Trade (%)
 input double   InpMaxRiskPercent  = 2.0;             // Maximum Risk Per Trade (%)
@@ -81,7 +81,7 @@ input string   InpSection4        = "====== ENTRY FILTERS ======"; // ===Filters
 input int      InpMinSignalScore  = 65;              // Minimum Signal Score (0-100)
 input double   InpMaxSpread       = 10000.0;         // Maximum Spread (points)
 input int      InpMinVolume       = 10;              // Minimum Tick Volume
-input int      InpMaxPositions    = 2;               // Max Simultaneous Positions
+input int      InpMaxPositions    = 5;               // Max Simultaneous Positions
 
 input string   InpSection5        = "====== TREND PARAMETERS ======"; // ===Trend===
 input int      InpEMA20           = 20;              // EMA Fast Period
@@ -169,6 +169,9 @@ int  g_barCount = 0;
 //--- Partial close tracking
 ulong  g_trackedTickets[];
 bool   g_partialClosed[];
+
+//--- Deal tracking (prevent duplicate counting in OnTrade)
+ulong  g_lastProcessedDeal = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                    |
@@ -629,11 +632,10 @@ void ExecuteTrade(const SSignalResult &signal, double lotSize)
       tp = NormalizeDouble(price + tpDist, digits);
 
       if(g_trade.Buy(lotSize, _Symbol, 0, sl, tp, InpComment))
-      {
-         Print("BUY executed: Lot=", lotSize, " SL=", sl, " TP=", tp);
-         TrackPosition(g_trade.ResultOrder());
-         g_totalTrades++;
-      }
+       {
+          Print("BUY executed: Lot=", lotSize, " SL=", sl, " TP=", tp);
+          TrackPosition(g_trade.ResultOrder());
+       }
       else
          Print("BUY FAILED: ", g_trade.ResultRetcode(), " ", g_trade.ResultComment());
    }
@@ -644,11 +646,10 @@ void ExecuteTrade(const SSignalResult &signal, double lotSize)
       tp = NormalizeDouble(price - tpDist, digits);
 
       if(g_trade.Sell(lotSize, _Symbol, 0, sl, tp, InpComment))
-      {
-         Print("SELL executed: Lot=", lotSize, " SL=", sl, " TP=", tp);
-         TrackPosition(g_trade.ResultOrder());
-         g_totalTrades++;
-      }
+       {
+          Print("SELL executed: Lot=", lotSize, " SL=", sl, " TP=", tp);
+          TrackPosition(g_trade.ResultOrder());
+       }
       else
          Print("SELL FAILED: ", g_trade.ResultRetcode(), " ", g_trade.ResultComment());
    }
@@ -669,7 +670,7 @@ double CalculateLotSize(double stopLossDistance)
 
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double lotSize = InpStartLot;
+   double lotSize = 0;
 
    if(stopLossDistance > 0 && tickValue > 0 && tickSize > 0)
    {
@@ -677,6 +678,20 @@ double CalculateLotSize(double stopLossDistance)
       double riskPerLot = slTicks * tickValue;
       if(riskPerLot > 0)
          lotSize = riskMoney / riskPerLot;
+   }
+
+   //--- Fallback: if calculation failed, use StartLot but validate risk
+   if(lotSize <= 0)
+   {
+      lotSize = InpStartLot;
+      //--- Validate fallback doesn't exceed MaxRiskPercent of equity
+      if(stopLossDistance > 0 && equity > 0)
+      {
+         double approxRisk = lotSize * stopLossDistance;
+         double maxAllowed = equity * InpMaxRiskPercent / 100.0;
+         if(approxRisk > maxAllowed && approxRisk > 0)
+            lotSize = lotSize * (maxAllowed / approxRisk);
+      }
    }
 
    //--- Cap: never exceed 2x StartLot regardless of account growth
@@ -689,6 +704,19 @@ double CalculateLotSize(double stopLossDistance)
    lotSize = MathFloor(lotSize / lotStep) * lotStep;
 
    if(lotSize < minLot) lotSize = minLot;
+
+   //--- Final risk check: never risk more than MaxRiskPercent
+   if(stopLossDistance > 0 && tickValue > 0 && tickSize > 0)
+   {
+      double finalRisk = (stopLossDistance / tickSize) * tickValue * lotSize;
+      double maxRisk = equity * InpMaxRiskPercent / 100.0;
+      if(finalRisk > maxRisk && finalRisk > 0)
+      {
+         lotSize = lotSize * (maxRisk / finalRisk);
+         lotSize = MathFloor(lotSize / lotStep) * lotStep;
+         if(lotSize < minLot) lotSize = minLot;
+      }
+   }
 
    return NormalizeDouble(lotSize, 2);
 }
@@ -736,14 +764,15 @@ void ManageOpenPositions()
       if(InpUseTrailing)
       {
          double trailDist = g_atr * InpTrailATRMult;
-         double minStep = g_atr * 0.15; // Minimum step before updating
-         if(posType == POSITION_TYPE_BUY && currentPrice > openPrice + trailDist)
+         double activationDist = g_atr * (InpATRMultiplierSL + InpTrailATRMult) * 0.5; // Activate only after significant move
+         double minStep = g_atr * 0.5; // Minimum 0.5 ATR step to avoid constant micro-updates
+         if(posType == POSITION_TYPE_BUY && currentPrice > openPrice + activationDist)
          {
             double newSL = NormalizeDouble(currentPrice - trailDist, digits);
             if(newSL > currentSL + minStep && newSL > openPrice)
                g_trade.PositionModify(ticket, newSL, PositionGetDouble(POSITION_TP));
          }
-         else if(posType == POSITION_TYPE_SELL && currentPrice < openPrice - trailDist)
+         else if(posType == POSITION_TYPE_SELL && currentPrice < openPrice - activationDist)
          {
             double newSL = NormalizeDouble(currentPrice + trailDist, digits);
             if((newSL < currentSL - minStep || currentSL == 0) && newSL < openPrice)
@@ -788,16 +817,16 @@ bool IsTradingAllowed()
 
    if(balance > g_peakBalance) g_peakBalance = balance;
 
-   //--- Daily DD: blocks only until next day (reset in UpdatePeriodTracking)
-   double dailyDD = (g_dailyStartBalance > 0) ? (g_dailyStartBalance - equity) / g_dailyStartBalance * 100.0 : 0;
+   //--- Daily DD: compare balance (realized) to daily start - blocks until next day reset
+   double dailyDD = (g_dailyStartBalance > 0) ? (g_dailyStartBalance - balance) / g_dailyStartBalance * 100.0 : 0;
    if(dailyDD > InpMaxDailyDD) return false;
 
-   //--- Weekly DD: blocks only until next week
-   double weeklyDD = (g_weeklyStartBalance > 0) ? (g_weeklyStartBalance - equity) / g_weeklyStartBalance * 100.0 : 0;
+   //--- Weekly DD: compare balance to weekly start
+   double weeklyDD = (g_weeklyStartBalance > 0) ? (g_weeklyStartBalance - balance) / g_weeklyStartBalance * 100.0 : 0;
    if(weeklyDD > InpMaxWeeklyDD) return false;
 
-   //--- Monthly DD: blocks only until next month
-   double monthlyDD = (g_monthlyStartBalance > 0) ? (g_monthlyStartBalance - equity) / g_monthlyStartBalance * 100.0 : 0;
+   //--- Monthly DD: compare balance to monthly start
+   double monthlyDD = (g_monthlyStartBalance > 0) ? (g_monthlyStartBalance - balance) / g_monthlyStartBalance * 100.0 : 0;
    if(monthlyDD > InpMaxMonthlyDD) return false;
 
    //--- Global DD: use rolling peak (reset peak monthly to allow recovery)
@@ -999,14 +1028,16 @@ void OnTrade()
 {
    if(!g_isInitialized) return;
 
-   datetime fromDate = TimeCurrent() - 60;
-   HistorySelect(fromDate, TimeCurrent());
+   //--- Select full history to find latest deals
+   HistorySelect(0, TimeCurrent());
 
    int totalDeals = HistoryDealsTotal();
    for(int i = totalDeals - 1; i >= 0; i--)
    {
       ulong ticket = HistoryDealGetTicket(i);
       if(ticket == 0) continue;
+      //--- Skip deals already processed
+      if(ticket <= g_lastProcessedDeal) break;
       if((int)HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
       if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagicNumber) continue;
 
@@ -1014,8 +1045,13 @@ void OnTrade()
                       HistoryDealGetDouble(ticket, DEAL_SWAP) +
                       HistoryDealGetDouble(ticket, DEAL_COMMISSION);
 
+      g_totalTrades++;
       if(profit > 0) { g_winningTrades++; g_totalProfit += profit; g_consecutiveLosses = 0; }
       else if(profit < 0) { g_totalLoss += MathAbs(profit); g_consecutiveLosses++; }
+
+      //--- Mark as processed
+      if(ticket > g_lastProcessedDeal)
+         g_lastProcessedDeal = ticket;
    }
 }
 
