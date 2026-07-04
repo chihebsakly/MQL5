@@ -82,6 +82,9 @@ input int      InpMinSignalScore  = 65;              // Minimum Signal Score (0-
 input double   InpMaxSpread       = 10000.0;         // Maximum Spread (points)
 input int      InpMinVolume       = 10;              // Minimum Tick Volume
 input int      InpMaxPositions    = 5;               // Max Simultaneous Positions
+input int      InpMinBarsBetween   = 3;               // Min Bars Between Entries
+input double   InpMinEntryATRDist  = 1.5;             // Min ATR Distance Between Entries
+input bool     InpSameDirectionOnly = true;           // Only Same Direction Positions
 
 input string   InpSection5        = "====== TREND PARAMETERS ======"; // ===Trend===
 input int      InpEMA20           = 20;              // EMA Fast Period
@@ -100,14 +103,14 @@ input int      InpStochSlowing    = 3;               // Stochastic Slowing
 
 input string   InpSection7        = "====== VOLATILITY PARAMETERS ======"; // ===Volatility===
 input int      InpATRPeriod       = 14;              // ATR Period
-input double   InpATRMultiplierSL = 2.0;             // ATR Multiplier for Stop Loss
-input double   InpATRMultiplierTP = 3.0;             // ATR Multiplier for Take Profit
+input double   InpATRMultiplierSL = 2.5;             // ATR Multiplier for Stop Loss
+input double   InpATRMultiplierTP = 4.0;             // ATR Multiplier for Take Profit
 
 input string   InpSection8        = "====== TRAILING STOP ======"; // ===Trailing===
-input bool     InpUseTrailing     = true;            // Enable Trailing Stop
-input double   InpTrailATRMult    = 1.0;             // Trailing ATR Multiplier
+input bool     InpUseTrailing     = false;           // Enable Trailing Stop
+input double   InpTrailATRMult    = 1.5;             // Trailing ATR Multiplier
 input bool     InpUseBreakEven    = true;            // Enable Break Even
-input double   InpBreakEvenATR    = 0.5;             // Break Even ATR Distance
+input double   InpBreakEvenATR    = 1.5;             // Break Even ATR Distance
 
 input string   InpSection9        = "====== PARTIAL CLOSE ======"; // ===Partial===
 input bool     InpUsePartialClose = true;            // Enable Partial Close
@@ -165,6 +168,11 @@ CTrade g_trade;
 datetime g_lastBarTime = 0;
 bool g_isInitialized = false;
 int  g_barCount = 0;
+
+//--- Entry spacing
+double   g_lastEntryPrice = 0;
+int      g_lastEntryBar = 0;
+int      g_currentDirection = 0;  // Track active direction
 
 //--- Partial close tracking
 ulong  g_trackedTickets[];
@@ -344,6 +352,26 @@ void OnTick()
    //--- Execute if strong signal
    if(signal.score >= InpMinSignalScore && signal.direction != 0)
    {
+      //--- Entry spacing: minimum bars between trades
+      if(g_lastEntryBar > 0 && (g_barCount - g_lastEntryBar) < InpMinBarsBetween)
+         return;
+
+      //--- Entry spacing: minimum ATR distance from last entry
+      double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(g_lastEntryPrice > 0 && g_atr > 0)
+      {
+         double dist = MathAbs(currentBid - g_lastEntryPrice);
+         if(dist < g_atr * InpMinEntryATRDist)
+            return;
+      }
+
+      //--- Directional filter: don't open opposite to existing positions
+      if(InpSameDirectionOnly && CountMyPositions() > 0)
+      {
+         if(g_currentDirection != 0 && signal.direction != g_currentDirection)
+            return;
+      }
+
       Print(">>> SIGNAL: Score=", signal.score, " Dir=", (signal.direction > 0 ? "BUY" : "SELL"),
             " ", signal.reason);
 
@@ -352,6 +380,9 @@ void OnTick()
       if(lotSize >= SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
       {
          ExecuteTrade(signal, lotSize);
+         g_lastEntryPrice = currentBid;
+         g_lastEntryBar = g_barCount;
+         g_currentDirection = signal.direction;
       }
       else
       {
@@ -1052,6 +1083,13 @@ void OnTrade()
       //--- Mark as processed
       if(ticket > g_lastProcessedDeal)
          g_lastProcessedDeal = ticket;
+   }
+
+   //--- Reset direction when all positions closed (allow new direction)
+   if(CountMyPositions() == 0)
+   {
+      g_currentDirection = 0;
+      g_lastEntryPrice = 0;
    }
 }
 
