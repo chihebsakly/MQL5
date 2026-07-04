@@ -71,11 +71,11 @@ input double   InpRiskPercent     = 1.0;             // Risk Per Trade (%)
 input double   InpMaxRiskPercent  = 2.0;             // Maximum Risk Per Trade (%)
 
 input string   InpSection3        = "====== DRAWDOWN PROTECTION ======"; // ===Drawdown===
-input double   InpMaxDailyDD      = 3.0;             // Max Daily Drawdown (%)
-input double   InpMaxWeeklyDD     = 5.0;             // Max Weekly Drawdown (%)
-input double   InpMaxMonthlyDD    = 8.0;             // Max Monthly Drawdown (%)
-input double   InpMaxGlobalDD     = 10.0;            // Max Global Drawdown (%)
-input int      InpMaxConsLosses   = 3;               // Max Consecutive Losses Before Pause
+input double   InpMaxDailyDD      = 5.0;             // Max Daily Drawdown (%)
+input double   InpMaxWeeklyDD     = 8.0;             // Max Weekly Drawdown (%)
+input double   InpMaxMonthlyDD    = 12.0;            // Max Monthly Drawdown (%)
+input double   InpMaxGlobalDD     = 15.0;            // Max Global Drawdown (%)
+input int      InpMaxConsLosses   = 4;               // Max Consecutive Losses Before Pause
 
 input string   InpSection4        = "====== ENTRY FILTERS ======"; // ===Filters===
 input int      InpMinSignalScore  = 65;              // Minimum Signal Score (0-100)
@@ -681,10 +681,15 @@ double CalculateLotSize(double stopLossDistance)
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
 
    if(tickValue <= 0 || tickSize <= 0 || stopLossDistance <= 0)
-      return minLot;
+      return InpStartLot;
 
    double ticksInSL = stopLossDistance / tickSize;
    double lotSize = riskAmount / (ticksInSL * tickValue);
+
+   //--- Progressive lot sizing: start with InpStartLot, only increase when account grows
+   double capitalRatio = accountValue / InpInitialCapital;
+   double maxAllowedLot = InpStartLot * capitalRatio;
+   lotSize = MathMin(lotSize, maxAllowedLot);
 
    lotSize = MathMax(lotSize, minLot);
    lotSize = MathMin(lotSize, InpMaxLot);
@@ -791,19 +796,27 @@ bool IsTradingAllowed()
 
    if(balance > g_peakBalance) g_peakBalance = balance;
 
+   //--- Daily DD: blocks only until next day (reset in UpdatePeriodTracking)
    double dailyDD = (g_dailyStartBalance > 0) ? (g_dailyStartBalance - equity) / g_dailyStartBalance * 100.0 : 0;
    if(dailyDD > InpMaxDailyDD) return false;
 
+   //--- Weekly DD: blocks only until next week
    double weeklyDD = (g_weeklyStartBalance > 0) ? (g_weeklyStartBalance - equity) / g_weeklyStartBalance * 100.0 : 0;
    if(weeklyDD > InpMaxWeeklyDD) return false;
 
+   //--- Monthly DD: blocks only until next month
    double monthlyDD = (g_monthlyStartBalance > 0) ? (g_monthlyStartBalance - equity) / g_monthlyStartBalance * 100.0 : 0;
    if(monthlyDD > InpMaxMonthlyDD) return false;
 
+   //--- Global DD: use rolling peak (reset peak monthly to allow recovery)
    double globalDD = (g_peakBalance > 0) ? (g_peakBalance - equity) / g_peakBalance * 100.0 : 0;
-   if(globalDD > InpMaxGlobalDD) return false;
    if(globalDD > g_maxDrawdown) g_maxDrawdown = globalDD;
 
+   //--- If global DD exceeded, reduce risk but DON'T stop trading permanently
+   //--- Only block if equity drops below critical level (50% of initial)
+   if(equity < InpInitialCapital * 0.5) return false;
+
+   //--- Consecutive losses: pause for current bar only, reset next day
    if(g_consecutiveLosses >= InpMaxConsLosses) return false;
 
    return true;
@@ -851,21 +864,25 @@ void UpdatePeriodTracking()
    TimeToStruct(g_lastWeekCheck, lastWeek);
    TimeToStruct(g_lastMonthCheck, lastMonth);
 
+   //--- New day: reset daily balance and consecutive losses
    if(now.day != lastDay.day)
    {
       g_dailyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
       g_lastDayCheck = TimeCurrent();
-      if(g_consecutiveLosses >= InpMaxConsLosses)
-         g_consecutiveLosses = 0;
+      //--- Always reset consecutive losses at new day
+      g_consecutiveLosses = 0;
    }
+   //--- New week: reset weekly balance
    if(now.day_of_week < lastWeek.day_of_week || (TimeCurrent() - g_lastWeekCheck) > 604800)
    {
       g_weeklyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
       g_lastWeekCheck = TimeCurrent();
    }
+   //--- New month: reset monthly balance AND peak (allows recovery)
    if(now.mon != lastMonth.mon)
    {
       g_monthlyStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      g_peakBalance = AccountInfoDouble(ACCOUNT_BALANCE); // Reset peak monthly
       g_lastMonthCheck = TimeCurrent();
    }
 }
