@@ -116,58 +116,85 @@ public:
       double buffer[];
       ArraySetAsSeries(buffer, true);
 
+      int copied = 0;
+      bool coreDataOK = true;
+
       //--- EMA values
-      if(CopyBuffer(m_hEMA20, 0, 0, 3, buffer) < 3) return false;
-      m_ema20 = buffer[1];
+      copied = CopyBuffer(m_hEMA20, 0, 1, 1, buffer);
+      if(copied >= 1) m_ema20 = buffer[0];
+      else coreDataOK = false;
 
-      if(CopyBuffer(m_hEMA50, 0, 0, 3, buffer) < 3) return false;
-      m_ema50 = buffer[1];
+      copied = CopyBuffer(m_hEMA50, 0, 1, 1, buffer);
+      if(copied >= 1) m_ema50 = buffer[0];
+      else coreDataOK = false;
 
-      if(CopyBuffer(m_hEMA100, 0, 0, 3, buffer) < 3) return false;
-      m_ema100 = buffer[1];
+      copied = CopyBuffer(m_hEMA100, 0, 1, 1, buffer);
+      if(copied >= 1) m_ema100 = buffer[0];
+      else coreDataOK = false;
 
-      if(CopyBuffer(m_hEMA200, 0, 0, 3, buffer) < 3) return false;
-      m_ema200 = buffer[1];
+      copied = CopyBuffer(m_hEMA200, 0, 1, 1, buffer);
+      if(copied >= 1) m_ema200 = buffer[0];
+      else coreDataOK = false;
 
       //--- RSI
-      if(CopyBuffer(m_hRSI, 0, 0, 3, buffer) < 3) return false;
-      m_rsi = buffer[1];
+      copied = CopyBuffer(m_hRSI, 0, 1, 1, buffer);
+      if(copied >= 1) m_rsi = buffer[0];
+      else coreDataOK = false;
 
       //--- MACD
-      if(CopyBuffer(m_hMACD, 0, 0, 3, buffer) < 3) return false;
-      m_macdMain = buffer[1];
-      if(CopyBuffer(m_hMACD, 1, 0, 3, buffer) < 3) return false;
-      m_macdSignal = buffer[1];
+      copied = CopyBuffer(m_hMACD, 0, 1, 1, buffer);
+      if(copied >= 1) m_macdMain = buffer[0];
+      else coreDataOK = false;
+
+      copied = CopyBuffer(m_hMACD, 1, 1, 1, buffer);
+      if(copied >= 1) m_macdSignal = buffer[0];
+      else coreDataOK = false;
       m_macdHist = m_macdMain - m_macdSignal;
 
       //--- Stochastic
-      if(CopyBuffer(m_hStoch, 0, 0, 3, buffer) < 3) return false;
-      m_stochK = buffer[1];
-      if(CopyBuffer(m_hStoch, 1, 0, 3, buffer) < 3) return false;
-      m_stochD = buffer[1];
+      copied = CopyBuffer(m_hStoch, 0, 1, 1, buffer);
+      if(copied >= 1) m_stochK = buffer[0];
+      else coreDataOK = false;
 
-      //--- ATR
-      if(CopyBuffer(m_hATR, 0, 0, 3, buffer) < 3) return false;
-      m_atr = buffer[1];
+      copied = CopyBuffer(m_hStoch, 1, 1, 1, buffer);
+      if(copied >= 1) m_stochD = buffer[0];
+      else coreDataOK = false;
 
-      //--- OBV
+      //--- ATR (critical)
+      copied = CopyBuffer(m_hATR, 0, 1, 1, buffer);
+      if(copied >= 1) m_atr = buffer[0];
+      else { Print("ERROR: ATR CopyBuffer failed"); return false; }
+
+      //--- OBV (non-critical)
       double obvBuffer[];
       ArraySetAsSeries(obvBuffer, true);
-      if(CopyBuffer(m_hOBV, 0, 0, 5, obvBuffer) < 5) return false;
-      m_obv = obvBuffer[1];
-      m_obvPrev = obvBuffer[2];
+      copied = CopyBuffer(m_hOBV, 0, 1, 2, obvBuffer);
+      if(copied >= 2)
+      {
+         m_obv = obvBuffer[0];
+         m_obvPrev = obvBuffer[1];
+      }
 
-      //--- MTF
-      if(CopyBuffer(m_hEMA50_M15, 0, 0, 2, buffer) >= 2) m_ema50_M15 = buffer[0];
-      if(CopyBuffer(m_hEMA50_H4, 0, 0, 2, buffer) >= 2)  m_ema50_H4 = buffer[0];
-      if(CopyBuffer(m_hEMA50_D1, 0, 0, 2, buffer) >= 2)  m_ema50_D1 = buffer[0];
-      if(CopyBuffer(m_hRSI_H4, 0, 0, 2, buffer) >= 2)    m_rsi_H4 = buffer[0];
-      if(CopyBuffer(m_hATR_H4, 0, 0, 2, buffer) >= 2)    m_atr_H4 = buffer[0];
+      //--- MTF (non-critical, use whatever is available)
+      if(CopyBuffer(m_hEMA50_M15, 0, 0, 1, buffer) >= 1) m_ema50_M15 = buffer[0];
+      if(CopyBuffer(m_hEMA50_H4, 0, 0, 1, buffer) >= 1)  m_ema50_H4 = buffer[0];
+      if(CopyBuffer(m_hEMA50_D1, 0, 0, 1, buffer) >= 1)  m_ema50_D1 = buffer[0];
+      if(CopyBuffer(m_hRSI_H4, 0, 0, 1, buffer) >= 1)    m_rsi_H4 = buffer[0];
+      if(CopyBuffer(m_hATR_H4, 0, 0, 1, buffer) >= 1)    m_atr_H4 = buffer[0];
 
       //--- Update Market Structure
       UpdateMarketStructure(symbol);
 
-      return true;
+      //--- Log warning if some data missing but continue
+      if(!coreDataOK)
+      {
+         static int warnCount = 0;
+         warnCount++;
+         if(warnCount <= 5)
+            Print("WARNING: Some indicator data unavailable (count ", warnCount, ")");
+      }
+
+      return true; // Always return true if ATR is OK
    }
 
    //+------------------------------------------------------------------+

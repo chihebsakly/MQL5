@@ -66,8 +66,8 @@ public:
       m_partialATRMult  = partialATRMult;
 
       m_trade.SetExpertMagicNumber(magic);
-      m_trade.SetDeviationInPoints(30); // Max slippage for BTC
-      m_trade.SetTypeFilling(ORDER_FILLING_IOC);
+      m_trade.SetDeviationInPoints(50); // Max slippage for BTC
+      m_trade.SetTypeFilling(ORDER_FILLING_FOK);
 
       m_initialized = true;
       return true;

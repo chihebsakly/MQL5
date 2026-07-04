@@ -50,8 +50,8 @@ input int      InpMaxConsLosses   = 3;               // Max Consecutive Losses B
 //--- Entry Filters
 input string   InpSection4        = "?????? ENTRY FILTERS ??????"; // ??????????????????
 input int      InpMinSignalScore  = 70;              // Minimum Signal Score (0-100)
-input double   InpMaxSpread       = 50.0;            // Maximum Spread (points)
-input int      InpMinVolume       = 100;             // Minimum Tick Volume
+input double   InpMaxSpread       = 500.0;            // Maximum Spread (points)
+input int      InpMinVolume       = 50;              // Minimum Tick Volume
 
 //--- Trend Parameters
 input string   InpSection5        = "?????? TREND PARAMETERS ??????"; // ???????????????
@@ -247,16 +247,30 @@ void OnTick()
    if(currentBarTime == g_lastBarTime) return;
    g_lastBarTime = currentBarTime;
 
+   //--- Bar counter for logging
+   static int barCount = 0;
+   barCount++;
+
    //--- Update market analysis
    if(!g_MarketAnalyzer.Update(_Symbol))
    {
-      Print("WARNING: Market analysis update failed");
+      if(barCount <= 10)
+         Print("BAR ", barCount, ": Update() failed - ATR unavailable");
       return;
+   }
+
+   //--- Log first bars to confirm EA is processing
+   if(barCount <= 3)
+   {
+      Print("BAR ", barCount, ": Update OK. ATR=", DoubleToString(g_MarketAnalyzer.GetATRValue(), 2),
+            " RSI=", DoubleToString(g_MarketAnalyzer.GetRSIValue(), 1));
    }
 
    //--- Check risk limits
    if(!g_RiskManager.IsTradingAllowed())
    {
+      if(barCount <= 5)
+         Print("BAR ", barCount, ": BLOCKED by Risk Manager");
       if(InpShowDashboard)
          g_Dashboard.Update(g_RiskManager, g_MarketAnalyzer, g_MLEngine, "BLOCKED - Risk Limit");
       return;
@@ -265,15 +279,19 @@ void OnTick()
    //--- Session filter
    if(InpUseSessions && !IsValidSession())
    {
+      if(barCount <= 5)
+         Print("BAR ", barCount, ": BLOCKED by Session Filter");
       if(InpShowDashboard)
          g_Dashboard.Update(g_RiskManager, g_MarketAnalyzer, g_MLEngine, "WAITING - Session");
       return;
    }
 
    //--- Spread filter
-   double currentSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * _Point;
-   if(currentSpread > InpMaxSpread * _Point)
+   long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(spreadPoints > (long)InpMaxSpread)
    {
+      if(barCount <= 5)
+         Print("BAR ", barCount, ": BLOCKED by Spread (", spreadPoints, " > ", InpMaxSpread, ")");
       if(InpShowDashboard)
          g_Dashboard.Update(g_RiskManager, g_MarketAnalyzer, g_MLEngine, "BLOCKED - Spread");
       return;
@@ -283,6 +301,8 @@ void OnTick()
    long tickVolume = iVolume(_Symbol, PERIOD_H1, 1);
    if(tickVolume < InpMinVolume)
    {
+      if(barCount <= 5)
+         Print("BAR ", barCount, ": BLOCKED by Volume (", tickVolume, " < ", InpMinVolume, ")");
       if(InpShowDashboard)
          g_Dashboard.Update(g_RiskManager, g_MarketAnalyzer, g_MLEngine, "LOW VOLUME");
       return;
@@ -296,15 +316,14 @@ void OnTick()
    SSignalResult signal;
    g_AIEngine.EvaluateSignal(state, signal);
 
-   //--- Debug logging (every H1 bar)
-   static int debugCount = 0;
-   debugCount++;
-   if(debugCount % 24 == 0) // Log once per day approximately
+   //--- Log every bar for first 10, then every 24 bars
+   if(barCount <= 10 || barCount % 24 == 0)
    {
-      Print("DEBUG: Score=", signal.score, " Dir=", signal.direction,
+      Print("BAR ", barCount, ": Score=", signal.score, " Dir=", signal.direction,
             " Trend=", state.trendDirection, " Mom=", state.momentumBias,
             " Struct=", state.structureBias, " MTF=", state.mtfBias,
-            " ATR=", DoubleToString(g_MarketAnalyzer.GetATRValue(), 2));
+            " ATR=", DoubleToString(g_MarketAnalyzer.GetATRValue(), 2),
+            " RSI=", DoubleToString(state.rsiValue, 1));
    }
 
    //--- ML Filter
@@ -318,6 +337,9 @@ void OnTick()
    //--- Execute if signal is strong enough
    if(signal.score >= InpMinSignalScore)
    {
+      Print("SIGNAL TRIGGERED: Score=", signal.score, " Dir=", signal.direction,
+            " Reason=", signal.reason);
+
       double lotSize = g_RiskManager.CalculateLotSize(
          _Symbol, 
          g_MarketAnalyzer.GetATRValue() * InpATRMultiplierSL
@@ -335,6 +357,10 @@ void OnTick()
             g_MLEngine.RecordEntry(signal, state);
             g_RiskManager.OnTradeOpened(lotSize);
          }
+      }
+      else
+      {
+         Print("WARNING: LotSize calculated as 0");
       }
    }
 
