@@ -104,9 +104,9 @@ input double   InpATRMultiplierTP = 3.0;             // ATR Multiplier for Take 
 
 input string   InpSection8        = "====== TRAILING STOP ======"; // ===Trailing===
 input bool     InpUseTrailing     = true;            // Enable Trailing Stop
-input double   InpTrailATRMult    = 1.0;             // Trailing ATR Multiplier (was 1.5)
+input double   InpTrailATRMult    = 1.0;             // Trailing ATR Multiplier
 input bool     InpUseBreakEven    = true;            // Enable Break Even
-input double   InpBreakEvenATR    = 0.5;             // Break Even ATR Distance (was 1.0)
+input double   InpBreakEvenATR    = 0.5;             // Break Even ATR Distance
 
 input string   InpSection9        = "====== PARTIAL CLOSE ======"; // ===Partial===
 input bool     InpUsePartialClose = true;            // Enable Partial Close
@@ -164,8 +164,6 @@ CTrade g_trade;
 datetime g_lastBarTime = 0;
 bool g_isInitialized = false;
 int  g_barCount = 0;
-datetime g_lastLossTime = 0;  // Cooldown after loss
-int  g_cooldownBars = 0;     // Bars to wait after loss
 
 //--- Partial close tracking
 ulong  g_trackedTickets[];
@@ -322,13 +320,6 @@ void OnTick()
    //--- Check if already have a position
    if(CountMyPositions() > 0)
       return;
-
-   //--- Cooldown after loss: wait 3 bars minimum
-   if(g_cooldownBars > 0)
-   {
-      g_cooldownBars--;
-      return;
-   }
 
    //--- Build market state
    SMarketState state;
@@ -671,12 +662,8 @@ double CalculateLotSize(double stopLossDistance)
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
 
-   //--- Use InpStartLot as base, only reduce after consecutive losses
+   //--- Use InpStartLot as base
    double lotSize = InpStartLot;
-
-   //--- Reduce after losses
-   if(g_consecutiveLosses >= 2) lotSize = InpStartLot * 0.5;
-   if(g_consecutiveLosses >= 3) lotSize = InpStartLot * 0.25;
 
    //--- Scale up with account growth
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -715,22 +702,6 @@ void ManageOpenPositions()
                             SymbolInfoDouble(_Symbol, SYMBOL_BID) :
                             SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
-      //--- Progressive Risk Reduction: when +0.3 ATR profit, reduce SL to half original distance
-      double slDist = g_atr * InpATRMultiplierSL;
-      double earlyProtectDist = g_atr * 0.3;
-      if(posType == POSITION_TYPE_BUY && currentPrice >= openPrice + earlyProtectDist)
-      {
-         double halfSL = NormalizeDouble(openPrice - slDist * 0.5, digits);
-         if(currentSL < halfSL)
-            g_trade.PositionModify(ticket, halfSL, PositionGetDouble(POSITION_TP));
-      }
-      else if(posType == POSITION_TYPE_SELL && currentPrice <= openPrice - earlyProtectDist)
-      {
-         double halfSL = NormalizeDouble(openPrice + slDist * 0.5, digits);
-         if(currentSL > halfSL || currentSL == 0)
-            g_trade.PositionModify(ticket, halfSL, PositionGetDouble(POSITION_TP));
-      }
-
       //--- Break Even
       if(InpUseBreakEven)
       {
@@ -753,7 +724,7 @@ void ManageOpenPositions()
       if(InpUseTrailing)
       {
          double trailDist = g_atr * InpTrailATRMult;
-         double minStep = g_atr * 0.25; // Minimum 25% ATR movement before updating (was 10%)
+         double minStep = g_atr * 0.15; // Minimum step before updating
          if(posType == POSITION_TYPE_BUY && currentPrice > openPrice + trailDist)
          {
             double newSL = NormalizeDouble(currentPrice - trailDist, digits);
@@ -1032,7 +1003,7 @@ void OnTrade()
                       HistoryDealGetDouble(ticket, DEAL_COMMISSION);
 
       if(profit > 0) { g_winningTrades++; g_totalProfit += profit; g_consecutiveLosses = 0; }
-      else if(profit < 0) { g_totalLoss += MathAbs(profit); g_consecutiveLosses++; g_cooldownBars = 3; }
+      else if(profit < 0) { g_totalLoss += MathAbs(profit); g_consecutiveLosses++; }
    }
 }
 
