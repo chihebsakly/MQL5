@@ -81,6 +81,7 @@ input string   InpSection4        = "====== ENTRY FILTERS ======"; // ===Filters
 input int      InpMinSignalScore  = 65;              // Minimum Signal Score (0-100)
 input double   InpMaxSpread       = 10000.0;         // Maximum Spread (points)
 input int      InpMinVolume       = 10;              // Minimum Tick Volume
+input int      InpMaxPositions    = 2;               // Max Simultaneous Positions
 
 input string   InpSection5        = "====== TREND PARAMETERS ======"; // ===Trend===
 input int      InpEMA20           = 20;              // EMA Fast Period
@@ -317,8 +318,8 @@ void OnTick()
    if(vol < InpMinVolume)
       return;
 
-   //--- Check if already have a position
-   if(CountMyPositions() > 0)
+   //--- Check max positions
+   if(CountMyPositions() >= InpMaxPositions)
       return;
 
    //--- Build market state
@@ -662,13 +663,24 @@ double CalculateLotSize(double stopLossDistance)
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
 
-   //--- Use InpStartLot as base
+   //--- Risk-based lot: risk% of equity / SL value
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double riskMoney = equity * InpRiskPercent / 100.0;
+
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double lotSize = InpStartLot;
 
-   //--- Scale up with account growth
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double capitalRatio = balance / InpInitialCapital;
-   if(capitalRatio > 2.0) lotSize = InpStartLot * (capitalRatio / 2.0);
+   if(stopLossDistance > 0 && tickValue > 0 && tickSize > 0)
+   {
+      double slTicks = stopLossDistance / tickSize;
+      double riskPerLot = slTicks * tickValue;
+      if(riskPerLot > 0)
+         lotSize = riskMoney / riskPerLot;
+   }
+
+   //--- Cap: never exceed 2x StartLot regardless of account growth
+   lotSize = MathMin(lotSize, InpStartLot * 2.0);
 
    //--- Apply limits
    lotSize = MathMax(lotSize, minLot);
