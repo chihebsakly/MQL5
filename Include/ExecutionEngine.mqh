@@ -147,7 +147,7 @@ public:
    {
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
-         if(!PositionGetSymbol(i) == symbol) continue;
+         if(PositionGetSymbol(i) != symbol) continue;
          if(PositionGetInteger(POSITION_MAGIC) != m_magicNumber) continue;
 
          ulong ticket = PositionGetInteger(POSITION_TICKET);
